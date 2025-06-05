@@ -15,7 +15,13 @@ def create_app():
     
     # Initialize extensions
     db.init_app(app)
-    CORS(app)
+    
+    # Configure CORS based on environment
+    if os.environ.get('VERCEL'):
+        CORS(app, origins="*", supports_credentials=True)
+    else:
+        CORS(app, origins=app.config['CORS_ORIGINS'], supports_credentials=True)
+    
     jwt = JWTManager(app)
     
     # Register blueprints
@@ -23,12 +29,15 @@ def create_app():
     app.register_blueprint(chat_bp, url_prefix='/api/chat')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     
-    # Create tables
+    # Create tables and seed data
     with app.app_context():
         db.create_all()
         # Load sample data if database is empty
         from utils.seed_data import seed_sample_products
-        seed_sample_products()
+        try:
+            seed_sample_products()
+        except Exception as e:
+            print(f"Warning: Could not seed data: {e}")
     
     @app.route('/')
     def index():
@@ -41,6 +50,18 @@ def create_app():
     @app.route('/health')
     def health_check():
         return jsonify({'status': 'healthy'})
+    
+    @app.route('/api')
+    def api_root():
+        return jsonify({
+            'message': 'E-commerce Sales Chatbot API',
+            'version': '1.0.0',
+            'endpoints': {
+                'products': '/api/products',
+                'chat': '/api/chat',
+                'auth': '/api/auth'
+            }
+        })
     
     return app
 

@@ -34,6 +34,39 @@ A comprehensive sales chatbot tailored for e-commerce platforms that enhances th
 - **Node.js 16 or higher**
 - **npm or yarn**
 
+## 🌐 Quick Deploy to Vercel
+
+### Option 1: One-Click Deploy
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/your-username/sales-bot)
+
+### Option 2: Manual Deployment
+
+1. **Prepare your repository**: Ensure your code is pushed to GitHub/GitLab/Bitbucket
+
+2. **Deploy using PowerShell script**:
+   ```powershell
+   .\deploy.ps1
+   ```
+
+3. **Deploy to Vercel**:
+   ```bash
+   npx vercel login
+   npx vercel --prod
+   ```
+
+4. **Set Environment Variables** in Vercel Dashboard:
+   - `SECRET_KEY` - Your Flask secret key
+   - `JWT_SECRET_KEY` - Your JWT secret key  
+   - `VERCEL=1` - Indicates Vercel deployment
+
+### Environment Variables
+Copy `.env.example` to `.env` and update the values:
+```bash
+SECRET_KEY=your-production-secret-key
+JWT_SECRET_KEY=your-jwt-secret-key
+VERCEL=1
+```
+
 ## 🚀 Installation & Setup
 
 ### 1. Clone the Repository

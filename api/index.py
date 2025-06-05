@@ -1,18 +1,22 @@
 import sys
 import os
+from flask import Flask
 
 # Add the backend directory to the Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
+current_dir = os.path.dirname(__file__)
+backend_dir = os.path.join(current_dir, '..', 'backend')
+sys.path.insert(0, backend_dir)
 
-from backend.app import create_app
+# Import after adding to path
+from app import create_app
 
 # Create the Flask app
 app = create_app()
 
-# For Vercel serverless functions
-def handler(event, context):
+# Vercel serverless function handler
+def handler(request):
     return app
 
-# Export the app for Vercel
+# For development
 if __name__ == '__main__':
-    app.run()
+    app.run(debug=True)
