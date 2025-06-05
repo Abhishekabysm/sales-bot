@@ -70,3 +70,4 @@ wheels/
 venv/
 env/
 ENV/
+.vercel
