@@ -1,0 +1,21 @@
+{
+    "name": "sales-bot",
+    "version": "1.0.0",
+    "description": "AI-Powered E-commerce Sales Assistant",
+    "main": "api/index.py",
+    "scripts": {
+        "build": "cd frontend && npm install && npm run build",
+        "dev": "cd frontend && npm start",
+        "dev:backend": "cd backend && python app.py"
+    },
+    "keywords": [
+        "ai",
+        "chatbot",
+        "ecommerce",
+        "sales",
+        "react",
+        "flask"
+    ],
+    "author": "Abhishek",
+    "license": "MIT"
+}
