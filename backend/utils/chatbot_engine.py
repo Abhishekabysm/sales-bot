@@ -95,10 +95,19 @@ class ChatbotEngine:
         if self._matches_pattern(message_lower, self.help_patterns):
             return self._handle_help()
         
-        # Detect intent
+        # Extract entities first to better identify the message type
+        entities = self._extract_entities(message_lower)
+        
+        # Detect intent using extracted entities
         intent = self._detect_intent(message_lower)
         
-        # Check for product search
+        # Check for direct product queries - when categories or price info exists
+        if (entities['categories'] or 
+            entities['price_min'] is not None or 
+            entities['price_max'] is not None):
+            return self._handle_product_search(message, intent)
+        
+        # Check for product search with explicit search terms
         if self._matches_pattern(message_lower, self.search_patterns) or intent in ['search', 'recommendation', 'comparison']:
             return self._handle_product_search(message, intent)
         
@@ -139,11 +148,27 @@ class ChatbotEngine:
         
         message_lower = message.lower()
         
-        # Extract categories
-        for category, keywords in self.category_mapping.items():
-            for keyword in keywords:
-                if keyword in message_lower:
-                    entities['categories'].append(category)
+        # Improved compound categories: prioritize as a single filter
+        compound_categories = {
+            'gaming laptops': {'category': 'laptops', 'keyword': 'gaming'},
+            'smart watches': {'category': 'smartwatches', 'keyword': 'smart'},
+            'wireless headphones': {'category': 'headphones', 'keyword': 'wireless'},
+            'smartphone accessories': {'category': 'accessories', 'keyword': 'smartphone'},
+            # Add more compound categories as needed
+        }
+        found_compound = False
+        for compound, mapping in compound_categories.items():
+            if compound in message_lower:
+                entities['categories'].append(mapping['category'])
+                entities['keywords'].append(mapping['keyword'])
+                found_compound = True
+        
+        # Only extract individual categories if no compound found
+        if not found_compound:
+            for category, keywords in self.category_mapping.items():
+                for keyword in keywords:
+                    if keyword in message_lower:
+                        entities['categories'].append(category)
         
         # Extract brands
         for brand, keywords in self.brand_mapping.items():
@@ -185,7 +210,10 @@ class ChatbotEngine:
         clean_message = re.sub(r'\$\d+', '', clean_message)
         
         words = re.findall(r'\b[a-zA-Z]+\b', clean_message)
-        entities['keywords'] = [word for word in words if word not in stop_words and len(word) > 2]
+        # Don't add duplicate keywords
+        for word in words:
+            if word not in stop_words and len(word) > 2 and word not in entities['keywords']:
+                entities['keywords'].append(word)
         
         # Remove duplicates
         entities['categories'] = list(set(entities['categories']))
@@ -193,7 +221,7 @@ class ChatbotEngine:
         entities['keywords'] = list(set(entities['keywords']))
         
         return entities
-    
+
     def _matches_pattern(self, text, patterns):
         """Check if text matches any of the given patterns"""
         for pattern in patterns:
@@ -231,68 +259,105 @@ Just describe what you need and I'll help you find it!""",
             'type': 'help'        }
     
     def _handle_product_search(self, message, intent='search'):
-        """Handle product search queries with enhanced AI"""
+        """Handle product search queries with enhanced AI and fallback logic"""
         try:
-            # Extract entities from message
             entities = self._extract_entities(message)
-            
-            # Build query
+            # Remove category names and synonyms from keywords to avoid redundant filtering
+            category_synonyms = set()
+            for cat in entities['categories']:
+                category_synonyms.update(self.category_mapping.get(cat, []))
+            entities['keywords'] = [kw for kw in entities['keywords'] if kw not in entities['categories'] and kw not in category_synonyms]
             from sqlalchemy import or_, and_
             query = Product.query
-            
-            # Apply category filters
-            if entities['categories']:
-                category_filters = [Product.category.ilike(f'%{cat}%') for cat in entities['categories']]
-                query = query.filter(or_(*category_filters))
-            
-            # Apply brand filters
-            if entities['brands']:
-                brand_filters = [Product.brand.ilike(f'%{brand}%') for brand in entities['brands']]
-                query = query.filter(or_(*brand_filters))
-            
-            # Apply text search for remaining keywords
-            if entities['keywords']:
-                text_filters = []
-                for keyword in entities['keywords']:
-                    text_filters.extend([
-                        Product.name.ilike(f'%{keyword}%'),
-                        Product.description.ilike(f'%{keyword}%'),
-                        Product.category.ilike(f'%{keyword}%'),
-                        Product.brand.ilike(f'%{keyword}%')
-                    ])
-                if text_filters:
-                    query = query.filter(or_(*text_filters))
-            
-            # Apply price filters
-            if entities['price_min']:
-                query = query.filter(Product.price >= entities['price_min'])
-            
-            if entities['price_max']:
-                query = query.filter(Product.price <= entities['price_max'])
-            
-            # Order by relevance and rating
-            query = query.order_by(Product.rating.desc(), Product.price.asc())
-            
-            # Execute query with appropriate limit based on intent
+            print(f"[DEBUG] Entities: {entities}")
+
+            def run_query(category_filters=None, brand_filters=None, keyword_filters=None, price_min=None, price_max=None, limit=10, keyword_and=False):
+                q = Product.query
+                if category_filters:
+                    q = q.filter(and_(*category_filters))
+                if brand_filters:
+                    q = q.filter(or_(*brand_filters))
+                if keyword_filters:
+                    if keyword_and:
+                        # All keywords must match somewhere (AND)
+                        for kf in keyword_filters:
+                            q = q.filter(or_(*kf))
+                    else:
+                        # Any keyword match (OR)
+                        q = q.filter(or_(*[item for sublist in keyword_filters for item in sublist]))
+                if price_min:
+                    q = q.filter(Product.price >= price_min)
+                if price_max:
+                    q = q.filter(Product.price <= price_max)
+                q = q.order_by(Product.rating.desc(), Product.price.asc())
+                print(f"[DEBUG] SQL: {str(q)}")
+                return q.limit(limit).all()
+
+            # Build filters
+            category_filters = [Product.category.ilike(f'%{cat}%') for cat in entities['categories']] if entities['categories'] else None
+            brand_filters = [Product.brand.ilike(f'%{brand}%') for brand in entities['brands']] if entities['brands'] else None
+            # For better NLU: build keyword_filters as a list of lists (for AND logic)
+            keyword_filters = []
+            for keyword in entities['keywords']:
+                keyword_filters.append([
+                    Product.name.ilike(f'%{keyword}%'),
+                    Product.description.ilike(f'%{keyword}%'),
+                    Product.category.ilike(f'%{keyword}%'),
+                    Product.brand.ilike(f'%{keyword}%')
+                ])
+            keyword_filters = keyword_filters if keyword_filters else None
+            price_min = entities['price_min']
+            price_max = entities['price_max']
             limit = 5 if intent == 'recommendation' else 10
-            products = query.limit(limit).all()
-            
-            if products:
-                product_list = [product.to_dict() for product in products]
-                response = self._generate_response_text(entities, products, intent)
-                
-                return {
-                    'response': response,
-                    'type': 'product_search',
-                    'products': product_list,
-                    'intent': intent,
-                    'entities': entities
-                }
-            else:
-                # Smart fallback suggestions
-                return self._handle_no_results(entities, message)
-                
+
+            # 1. Try strict: category + brand + ALL keywords (AND) + price
+            products = run_query(category_filters, brand_filters, keyword_filters, price_min, price_max, limit, keyword_and=True)
+            print(f"[DEBUG] Products found (strict AND): {len(products)}")
+            if not products:
+                # 2. Try: category + price only
+                products = run_query(category_filters, None, None, price_min, price_max, limit)
+                print(f"[DEBUG] Products found (category+price): {len(products)}")
+            if not products and category_filters:
+                # 3. Try: category only
+                products = run_query(category_filters, None, None, None, None, limit)
+                print(f"[DEBUG] Products found (category only): {len(products)}")
+            # Always try keywords only if there are keywords, even if no category
+            if not products and keyword_filters:
+                # Try ALL keywords (AND)
+                products = run_query(None, None, keyword_filters, price_min, price_max, limit, keyword_and=True)
+                print(f"[DEBUG] Products found (keywords only AND): {len(products)}")
+            if not products and keyword_filters:
+                # Try ANY keyword (OR)
+                products = run_query(None, None, keyword_filters, price_min, price_max, limit, keyword_and=False)
+                print(f"[DEBUG] Products found (keywords only OR): {len(products)}")
+            if not products:
+                # Fallback: show popular products (no filters)
+                products = Product.query.order_by(Product.rating.desc(), Product.price.asc()).limit(limit).all()
+                print(f"[DEBUG] Products found (popular fallback): {len(products)}")
+                if not products:
+                    return self._handle_no_results(entities, message)
+                else:
+                    response = "I couldn't find an exact match, but here are some of our most popular products:"
+                    product_list = [product.to_dict() for product in products]
+                    return {
+                        'response': response,
+                        'type': 'product_search',
+                        'products': product_list,
+                        'intent': intent,
+                        'entities': entities
+                    }
+            # If we found products in any step
+            product_list = [product.to_dict() for product in products]
+            response = self._generate_response_text(entities, products, intent)
+            return {
+                'response': response,
+                'type': 'product_search',
+                'products': product_list,
+                'intent': intent,
+                'entities': entities
+            }
         except Exception as e:
+            print(f"[DEBUG] Exception: {e}")
             return {
                 'response': "I'm having trouble processing your search request. Please try rephrasing your query or ask for help to see what I can do.",
                 'type': 'error'
